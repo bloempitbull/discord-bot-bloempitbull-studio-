@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bot dashboard</title>
+<style>
+:root{--bg:#1e1f22;--card:#2b2d31;--line:#3a3c42;--tx:#e8e9ea;--mut:#9aa0a6;--acc:#5865f2;--red:#da373c;--grn:#23a55a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header b{font-size:16px}.sp{flex:1}
+nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px}
+nav button{background:var(--card);color:var(--tx);border:1px solid var(--line);padding:7px 12px;border-radius:6px;cursor:pointer}
+nav button.on{background:var(--acc);border-color:var(--acc)}
+main{padding:0 16px 24px;max-width:1100px;margin:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.stat b{display:block;font-size:22px}.mut{color:var(--mut)}
+.btn{background:var(--acc);color:#fff;border:0;padding:7px 12px;border-radius:6px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.red{background:var(--red)}.btn.grey{background:#4e5058}
+input,select,textarea{background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:7px;font:inherit;max-width:100%}
+textarea{width:100%}input[type=color]{padding:0;height:32px;width:44px}
+table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.split{display:grid;grid-template-columns:240px 1fr;gap:12px}@media(max-width:700px){.split{grid-template-columns:1fr}}
+.item{padding:8px;border-radius:6px;cursor:pointer}.item:hover,.item.on{background:#383a40}
+.msgs{height:360px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--bg)}
+.msg{margin-bottom:8px;white-space:pre-wrap;word-break:break-word}.msg small{color:var(--mut)}.msg.bot b{color:var(--acc)}
+.row{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-bottom:8px}.row textarea{flex:1;min-width:200px}
+.chip{display:inline-block;background:#383a40;border-radius:10px;padding:1px 8px;margin:2px;font-size:12px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.bars{display:flex;align-items:flex-end;gap:4px;height:100px}.bars div{flex:1;background:var(--acc);border-radius:3px 3px 0 0;min-height:2px}
+label{display:block;margin:8px 0 3px;color:var(--mut)}label.c{display:inline-block;margin:4px 12px 4px 0;color:var(--tx)}
+#toast{position:fixed;bottom:16px;right:16px;background:var(--red);padding:10px 14px;border-radius:6px;display:none}
+.center{text-align:center;margin:80px auto}
+</style>
+</head>
+<body>
+<header><b>🤖 Bot dashboard</b><select id="guild" onchange="G=this.value;go(tab)"></select><span class="sp"></span><span id="who" class="mut"></span><button class="btn grey" onclick="logout()">Uitloggen</button></header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let G=null,tab="stats",T=null,shown=null,iv=null;
+function toast(m,ok){const t=$("#toast");t.textContent=m;t.style.background=ok?"var(--grn)":"var(--red)";t.style.display="block";setTimeout(()=>t.style.display="none",3000)}
+async function api(path,body){
+  const r=await fetch("/api/"+path,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(r.status===401){login();throw 0}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){toast(j.error||"Fout");throw 0}
+  return j;
+}
+const ok=m=>toast(m||"Opgeslagen ✓",true);
+function login(){document.body.innerHTML='<div class="center"><h2>🤖 Bot dashboard</h2><p class="mut">Log in met het Discord-account van de beheerder.</p><a class="btn" href="/login">Inloggen met Discord</a></div>'}
+async function logout(){await api("logout",{});location.reload()}
+
+const TABS={stats:["Overzicht",rStats],cmds:["Commando's",rCmds],tickets:["Tickets",rTickets],roles:["Rollen",rRoles],members:["Leden",rMembers],settings:["Instellingen",rSettings],announce:["Aankondiging",rAnnounce]};
+function go(t){tab=t;$("#nav").innerHTML=Object.entries(TABS).map(([k,v])=>`<button class="${k==t?'on':''}" onclick="go('${k}')">${v[0]}</button>`).join("");TABS[t][1]()}
+(async()=>{
+  try{const me=await api("me");$("#who").textContent=me.name;
+  const gs=await api("guilds");$("#guild").innerHTML=gs.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join("");
+  G=gs[0]?.id;if(!G){$("#main").innerHTML='<p class="card">De bot zit nog in geen enkele server.</p>';return}
+  go("stats");iv=setInterval(()=>{if(tab==="tickets")refreshTickets()},5000)}catch(e){}
+})();
+const sel=(id,items,cur,none)=>`<select id="${id}">${none?'<option value="">— geen —</option>':''}${items.map(i=>`<option value="${i.id}" ${i.id==cur?'selected':''}>${esc(i.name)}</option>`).join("")}</select>`;
+
+/* ---------- Overzicht ---------- */
+async function rStats(){
+  const s=await api("stats?guild="+G);
+  const up=Math.floor(s.uptime/3600)+"u "+Math.floor(s.uptime%3600/60)+"m";
+  const mx=Math.max(1,...s.daily.map(d=>d[1]));
+  $("#main").innerHTML=`<div class="grid">
+  <div class="stat"><span class="mut">Commando's</span><b>${s.commands_total}</b></div>
+  <div class="stat"><span class="mut">Keer gebruikt</span><b>${s.uses_total}</b></div>
+  <div class="stat"><span class="mut">Vandaag gebruikt</span><b>${s.uses_today}</b></div>
+  <div class="stat"><span class="mut">Open tickets</span><b>${s.open_tickets}</b></div>
+  <div class="stat"><span class="mut">Leden</span><b>${s.members}</b></div>
+  <div class="stat"><span class="mut">Servers</span><b>${s.servers}</b></div>
+  <div class="stat"><span class="mut">Ping</span><b>${s.ping} ms</b></div>
+  <div class="stat"><span class="mut">Online sinds</span><b>${up}</b></div></div>
+  <div class="card"><b>Gebruik per dag (laatste 14 dagen)</b><div class="bars" style="margin-top:10px">${s.daily.map(d=>`<div title="${esc(d[0])}: ${d[1]}" style="height:${d[1]/mx*100}%"></div>`).join("")||'<span class="mut">Nog geen data</span>'}</div></div>
+  <div class="card"><b>Meest gebruikte commando's</b><table>${s.top.map(t=>`<tr><td>/${esc(t[0])}</td><td>${t[1]}×</td></tr>`).join("")||'<tr><td class="mut">Nog geen data</td></tr>'}</table></div>`;
+}
+
+/* ---------- Commando's ---------- */
+async function rCmds(){
+  const c=await api("commands?guild="+G);
+  $("#main").innerHTML=`<div class="card"><table><tr><th>Aan</th><th>Commando</th><th>Omschrijving</th><th>Gebruikt</th></tr>${c.map(x=>`<tr><td><input type="checkbox" ${x.enabled?"checked":""} onchange="toggleCmd('${x.name}',this.checked)"></td><td>/${esc(x.name)}</td><td class="mut">${esc(x.desc)}</td><td>${x.uses}</td></tr>`).join("")}</table></div>`;
+}
+async function toggleCmd(name,enabled){await api("commands/toggle",{guild:G,name,enabled});ok(`/${name} staat ${enabled?"aan":"uit"}`)}
+
+/* ---------- Tickets ---------- */
+async function rTickets(){
+  shown=null;
+  $("#main").innerHTML=`<div class="split"><div class="card" id="tl"></div><div class="card" id="tc"><p class="mut">Kies een ticket.</p></div></div>`;
+  await listTickets();if(T)await openTicket(T);
+}
+async function listTickets(){
+  const t=await api("tickets?guild="+G);
+  if(T&&!t.some(x=>x.id==T)){T=null;shown=null;$("#tc").innerHTML='<p class="mut">Kies een ticket.</p>'}
+  $("#tl").innerHTML=t.map(x=>`<div class="item ${x.id==T?'on':''}" onclick="openTicket('${x.id}')"><b>${esc(x.name)}</b><br><span class="mut">${esc(x.owner)}</span></div>`).join("")||'<p class="mut">Geen open tickets.</p>';
+}
+async function openTicket(id){
+  T=id;const m=await api(`tickets/${id}/messages?guild=${G}`);
+  const force=shown!==id;
+  if(force||!$("#msgs")){shown=id;$("#tc").innerHTML=`<div class="msgs" id="msgs"></div><div class="row"><textarea id="rt" rows="2" placeholder="Antwoord aan de gebruiker…"></textarea><button class="btn" onclick="replyT()">Stuur</button><button class="btn red" onclick="closeT()">Sluit ticket</button></div>`}
+  const el=$("#msgs");const bottom=force||el.scrollHeight-el.scrollTop-el.clientHeight<40;
+  el.innerHTML=m.map(x=>`<div class="msg ${x.bot?'bot':''}"><b>${esc(x.author)}</b> <small>${esc(x.time)}</small><br>${esc(x.content)}</div>`).join("");
+  if(bottom)el.scrollTop=el.scrollHeight;
+  document.querySelectorAll("#tl .item").forEach(e=>e.classList.toggle("on",e.getAttribute("onclick").includes(`'${id}'`)));
+}
+async function refreshTickets(){try{await listTickets();if(T)await openTicket(T)}catch(e){}}
+async function replyT(){const v=$("#rt").value.trim();if(!v)return;await api(`tickets/${T}/reply`,{guild:G,content:v});$("#rt").value="";shown=T;await openTicket(T);$("#msgs").scrollTop=1e9}
+async function closeT(){if(!confirm("Ticket sluiten en kanaal verwijderen?"))return;await api(`tickets/${T}/close`,{guild:G});T=null;shown=null;ok("Ticket gesloten");rTickets()}
+
+/* ---------- Rollen ---------- */
+let RL=[],PERMS=[];
+async function rRoles(){
+  const r=await api("roles?guild="+G);RL=r.roles;PERMS=r.perms;
+  $("#main").innerHTML=`<div class="card"><button class="btn" onclick="editRole('')">+ Nieuwe rol</button><table><tr><th>Rol</th><th>Leden</th><th>Rechten</th><th></th></tr>${RL.map(x=>`<tr><td><span class="sw" style="background:${x.color}"></span>${esc(x.name)}</td><td>${x.members}</td><td class="mut">${x.perms.map(p=>`<span class="chip">${esc(p.replace(/_/g," "))}</span>`).join("")}</td><td>${x.managed?'<span class="mut">bot-rol</span>':`<button class="btn grey" onclick="editRole('${x.id}')">Bewerk</button>`}</td></tr>`).join("")}</table></div><div id="re"></div>`;
+}
+function editRole(id){
+  const x=RL.find(r=>r.id==id)||{id:"",name:"",color:"#99aab5",hoist:false,mentionable:false,perms:[]};
+  $("#re").innerHTML=`<div class="card"><b>${id?"Rol bewerken":"Nieuwe rol"}</b>
+  <label>Naam</label><input id="rn" value="${esc(x.name)}">
+  <label>Kleur</label><input type="color" id="rc" value="${x.color==="#000000"?"#99aab5":x.color}">
+  <div><label class="c"><input type="checkbox" id="rh" ${x.hoist?"checked":""}> Apart tonen in ledenlijst</label><label class="c"><input type="checkbox" id="rm" ${x.mentionable?"checked":""}> Iedereen mag @noemen</label></div>
+  <label>Rechten</label>${PERMS.map(p=>`<label class="c"><input type="checkbox" class="rp" value="${p}" ${x.perms.includes(p)?"checked":""}> ${esc(p.replace(/_/g," "))}</label>`).join("")}
+  <div style="margin-top:12px"><button class="btn" onclick="saveRole('${id}')">Opslaan</button> ${id?`<button class="btn red" onclick="delRole('${id}')">Verwijderen</button>`:""}</div></div>`;
+  $("#re").scrollIntoView({behavior:"smooth"});
+}
+async function saveRole(id){await api("roles/save",{guild:G,id,name:$("#rn").value,color:$("#rc").value,hoist:$("#rh").checked,mentionable:$("#rm").checked,perms:[...document.querySelectorAll(".rp:checked")].map(e=>e.value)});ok();rRoles()}
+async function delRole(id){if(!confirm("Rol definitief verwijderen?"))return;await api("roles/delete",{guild:G,id});ok("Rol verwijderd");rRoles()}
+
+/* ---------- Leden ---------- */
+let RM=[];
+async function rMembers(){
+  const r=await api("roles?guild="+G);RM=r.roles.filter(x=>!x.managed);
+  $("#main").innerHTML=`<div class="card"><div class="row"><input id="mq" placeholder="Zoek op naam of ID…" onkeydown="if(event.key==='Enter')findM()"><button class="btn" onclick="findM()">Zoek</button><button class="btn grey" onclick="unbanM()">Unban op ID</button></div><div id="ml"></div></div>`;
+}
+async function findM(){
+  const q=$("#mq").value.trim();if(!q)return;
+  const m=await api(`members?guild=${G}&q=${encodeURIComponent(q)}`);
+  $("#ml").innerHTML=m.map(x=>`<div class="card"><b>${esc(x.name)}</b> <span class="mut">${esc(x.id)}${x.muted?" · gemute":""}</span><div>${x.roles.map(id=>{const r=RM.find(r=>r.id==id);return r?`<span class="chip">${esc(r.name)} <a href="#" onclick="roleM('${x.id}','${id}',false);return false">✕</a></span>`:""}).join("")}</div>
+  <div class="row" style="margin-top:8px"><select id="ar${x.id}">${RM.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join("")}</select><button class="btn grey" onclick="roleM('${x.id}',$('#ar${x.id}').value,true)">Rol geven</button>
+  <button class="btn grey" onclick="actM('${x.id}','mute')">Mute</button><button class="btn grey" onclick="actM('${x.id}','unmute')">Unmute</button><button class="btn red" onclick="actM('${x.id}','kick')">Kick</button><button class="btn red" onclick="actM('${x.id}','ban')">Ban</button></div></div>`).join("")||'<p class="mut">Niemand gevonden.</p>';
+}
+async function roleM(user,role,add){await api("members/role",{guild:G,user,role,add});ok();findM()}
+async function actM(user,action){
+  let reason="",minutes=10;
+  if(action==="mute"){minutes=parseInt(prompt("Hoeveel minuten?","10"));if(!minutes)return}
+  if(action==="kick"||action==="ban"){if(!confirm(`Zeker weten: ${action}?`))return}
+  if(action!=="unmute")reason=prompt("Reden (optioneel)","")||"";
+  await api("members/action",{guild:G,user,action,reason,minutes});ok("Uitgevoerd ✓");findM()
+}
+async function unbanM(){const user=prompt("Gebruikers-ID om te unbannen:");if(!user)return;await api("members/action",{guild:G,user:user.trim(),action:"unban",reason:"via dashboard"});ok("Geunband ✓")}
+
+/* ---------- Instellingen ---------- */
+async function rSettings(){
+  const s=await api("settings?guild="+G),a=s.antiraid;
+  $("#main").innerHTML=`<div class="card"><b>Kanalen en tickets</b>
+  <label>Logkanaal</label>${sel("sl",s.channels,s.log_channel,1)}
+  <label>Welkomstkanaal</label>${sel("sw",s.channels,s.welcome_channel,1)}
+  <label>Ticketcategorie</label>${sel("sc",s.categories,s.ticket_category,1)}
+  <label>Supportrol (ziet alle tickets)</label>${sel("sr",s.roles,s.support_role,1)}</div>
+  <div class="card"><b>Anti-raid</b>
+  <div><label class="c"><input type="checkbox" id="ae" ${a.enabled?"checked":""}> Anti-raid aan</label></div>
+  <label>Trigger: aantal joins</label><input type="number" id="aj" min="2" max="50" value="${a.joins}">
+  <label>… binnen (seconden)</label><input type="number" id="as" min="2" max="120" value="${a.seconds}">
+  <label>Minimale accountleeftijd (dagen, 0 = uit)</label><input type="number" id="am" min="0" max="365" value="${a.min_age_days}">
+  <label>Actie</label><select id="aa"><option value="kick" ${a.action=="kick"?"selected":""}>kick</option><option value="ban" ${a.action=="ban"?"selected":""}>ban</option></select></div>
+  <button class="btn" onclick="saveSettings()">Opslaan</button>`;
+}
+async function saveSettings(){
+  await api("settings",{guild:G,log_channel:$("#sl").value,welcome_channel:$("#sw").value,ticket_category:$("#sc").value,support_role:$("#sr").value,
+  antiraid:{enabled:$("#ae").checked,joins:$("#aj").value,seconds:$("#as").value,min_age_days:$("#am").value,action:$("#aa").value}});ok()
+}
+
+/* ---------- Aankondiging ---------- */
+async function rAnnounce(){
+  const s=await api("settings?guild="+G);
+  $("#main").innerHTML=`<div class="card"><b>Aankondiging versturen</b>
+  <label>Kanaal</label>${sel("nc",s.channels,"")}
+  <label>Titel</label><input id="nt" style="width:100%">
+  <label>Bericht</label><textarea id="nm" rows="6"></textarea>
+  <label>Ping</label><select id="np"><option value="">Geen</option><option value="here">@here</option><option value="everyone">@everyone</option></select>
+  <div style="margin-top:12px"><button class="btn" onclick="sendAnn()">Versturen</button></div></div>`;
+}
+async function sendAnn(){
+  const title=$("#nt").value.trim(),message=$("#nm").value.trim();if(!title||!message)return toast("Vul titel en bericht in");
+  await api("announce",{guild:G,channel:$("#nc").value,title,message,ping:$("#np").value});ok("Verstuurd ✓");$("#nt").value="";$("#nm").value=""
+}
+</script>
+</body>
+</html>
